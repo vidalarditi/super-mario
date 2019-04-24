@@ -13,13 +13,15 @@ function createTiles(level, backgrounds){
   backgrounds.forEach(background => {
     const tile = background.get("tile");
     const ranges = background.get("ranges");
-    for (let x = ranges[0]; x < ranges[1]; ++x) {
-      for (let y = ranges[2]; y < ranges[3]; ++y) {
-        level.tiles.set(x, y, {
-          name: tile,
-        });
+    ranges.forEach(range => {
+      for (let x = range[0]; x < range[1]; ++x) {
+        for (let y = range[2]; y < range[3]; ++y) {
+          level.tiles.set(x, y, {
+            name: tile,
+          });
+        }
       }
-    }
+    })
   });
 }
 
@@ -29,10 +31,10 @@ function levelInfo(){
   const backgroundSky = new Map();
   const backgroundGround = new Map();
   backgroundSky.set("tile", "sky");
-  backgroundSky.set("ranges", [0, 25, 0, 14]);
+  backgroundSky.set("ranges", [[0, 25, 0, 14]]);
   backgrounds.set("sky", backgroundSky);
   backgroundGround.set("tile", "ground");
-  backgroundGround.set("ranges", [0, 25, 12, 14]);
+  backgroundGround.set("ranges", [[0, 25, 12, 14], [5, 8, 9, 10], [12, 18, 11, 12], [2, 3, 11, 12], [2, 3, 11, 12], [10, 12, 10, 11], [9, 10, 0, 7]]);
   backgrounds.set("ground", backgroundGround);
   return backgrounds;
 }
@@ -50,7 +52,6 @@ function loadLevel(){
     level.comp.layers.push(backgroundLayer);
     const spriteLayer = createSpriteLayer(level.entities);
     level.comp.layers.push(spriteLayer);
-    console.table(level.tiles.grid);  
     return level;
   })
 }
@@ -60,9 +61,7 @@ function loadBackgroundSprites(){
   const sprites = new SpritesSheet(image, 16, 16);
   
   sprites.defineTile("sky", 3, 23);
-  // sprites.addRanges("sky", [0, 25, 0, 14]);
   sprites.defineTile("ground", 0, 0);
-  // sprites.addRanges("ground", [0, 25, 12, 14]);
   return sprites;
 });
 }
@@ -153,13 +152,6 @@ class SpritesSheet{
    drawTile(name, context, x, y){
     this.draw(name, context, x*this.width, y*this.heigth);
    }
-
-  //  addRanges(name, ranges){
-  //    var background = new Map()
-  //    background.set("ranges", ranges);
-  //    background.set("tile", name);
-  //    this.backgrounds.set(name, background);
-  //  }
 }
 
 class Compositor{
@@ -290,7 +282,6 @@ class KeyboardState {
       return;
     }
     this.keyStates.set(keyCode, keyState);
-    console.log(this.keyStates);
     this.keyMap.get(keyCode)(keyState);
   }
   listenTo(window){
@@ -308,11 +299,14 @@ class Level{
     this.comp = new Compositor();
     this.entities = new Set();
     this.tiles = new Matrix();
+
+    this.tileCollider = new TileCollider(this.tiles);
   }
 
   update(deltaTime){
     this.entities.forEach(entity => {
-      entity.update(deltaTime); 
+      entity.update(deltaTime);
+      this.tileCollider.test(entity);
     });
   }
 }
@@ -324,8 +318,8 @@ class Matrix {
   }
   forEach(callback){
     this.grid.forEach((column, x) => {
-      column.forEach((tile, y) => {
-        callback(tile, x, y);
+      column.forEach((value, y) => {
+        callback(value, x, y);
       });
     });
   }
@@ -345,8 +339,44 @@ class Matrix {
     this.grid[x][y] = value;
   }
 }
+// window.Matrix = Matrix;
 
-window.Matrix = Matrix;
+
+//Colission checking and resolving
+class TileResolver{
+  constructor(matrix, tileSize = 16){
+    this.matrix = matrix;
+    this.tileSize = tileSize;
+  }
+  toIndex(pos){
+    return Math.floor(pos / this.tileSize);
+  }
+  getByIndex(indexX, indexY){
+    const tile = this.matrix.get(indexX, indexY);
+    if(tile){
+      return {
+        tile, 
+      };
+    }
+  }
+  matchByPosition(posX, posY){
+    return this.getByIndex(
+      this.toIndex(posX),
+      this.toIndex(posY));
+  }
+}
+
+class TileCollider{
+  constructor(tileMatrix){
+    this.tiles = new TileResolver(tileMatrix);
+  }
+  test(entity){
+    const match = this.tiles.matchByPosition(entity.pos.x, entity.pos.y);
+    if(match){
+      console.log("Matched tile", match, match.tile);
+    }
+  }
+}
 
 //HTML Canvas Joining
 const canvas = document.getElementById("screen");
@@ -372,9 +402,17 @@ Promise.all([
     } else {
       mario.jump.cancel();
     }
-    console.log(keyState);
   }); 
   keyboardInput.listenTo(window);
+
+  ["mousedown", "mousemove"].forEach(eventName => {
+    canvas.addEventListener(eventName, event => {
+      if(event.buttons === 1){
+        mario.vlcity.set(0, 0);
+        mario.pos.set(event.offsetX, event.offsetY);
+      }
+    });
+  });
 
   const timer = new Timer(1/60);
   timer.update = function update(deltaTime){
