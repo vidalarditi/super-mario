@@ -9,14 +9,50 @@ function loadImage(url){
   })
 }
 
-function drawBackground(name, context, sprites) {
-  const test = name.get("tile");
-  const ranges = name.get("ranges");
-  for (let x = ranges[0]; x < ranges[1]; ++x) {
+function createTiles(level, backgrounds){
+  backgrounds.forEach(background => {
+    const tile = background.get("tile");
+    const ranges = background.get("ranges");
+    for (let x = ranges[0]; x < ranges[1]; ++x) {
       for (let y = ranges[2]; y < ranges[3]; ++y) {
-          sprites.drawTile(test, context, x, y);
+        level.tiles.set(x, y, {
+          name: tile,
+        });
       }
-  }
+    }
+  });
+}
+
+
+function levelInfo(){
+  const backgrounds = new Map()
+  const backgroundSky = new Map();
+  const backgroundGround = new Map();
+  backgroundSky.set("tile", "sky");
+  backgroundSky.set("ranges", [0, 25, 0, 14]);
+  backgrounds.set("sky", backgroundSky);
+  backgroundGround.set("tile", "ground");
+  backgroundGround.set("ranges", [0, 25, 12, 14]);
+  backgrounds.set("ground", backgroundGround);
+  return backgrounds;
+}
+
+function loadLevel(){
+  return Promise.all([
+    levelInfo(), 
+    loadBackgroundSprites()
+  ]).then(([LevelSpec, backgroundSprites]) => {
+    const level = new Level();
+
+    createTiles(level, LevelSpec);
+
+    const backgroundLayer = createBackgroundLayer(level, backgroundSprites);
+    level.comp.layers.push(backgroundLayer);
+    const spriteLayer = createSpriteLayer(level.entities);
+    level.comp.layers.push(spriteLayer);
+    console.table(level.tiles.grid);  
+    return level;
+  })
 }
 
 function loadBackgroundSprites(){
@@ -24,9 +60,9 @@ function loadBackgroundSprites(){
   const sprites = new SpritesSheet(image, 16, 16);
   
   sprites.defineTile("sky", 3, 23);
-  sprites.addRanges("sky", [0, 25, 0, 14]);
+  // sprites.addRanges("sky", [0, 25, 0, 14]);
   sprites.defineTile("ground", 0, 0);
-  sprites.addRanges("ground", [0, 25, 12, 14]);
+  // sprites.addRanges("ground", [0, 25, 12, 14]);
   return sprites;
 });
 }
@@ -39,22 +75,28 @@ function loadMarioSprites(){
 });
 }
 
-function createBackgroundLayer(backgrounds, sprites){
+function createBackgroundLayer(level, sprites){
   const buffer = document.createElement("canvas");
   buffer.width = 256;
   buffer.height = 240;
-  backgrounds.forEach(background => {
-    drawBackground(background, buffer.getContext("2d"), sprites);
-  });
+
+  const context = buffer.getContext("2d");
+
+  level.tiles.forEach((tile, x, y) => {
+      sprites.drawTile(tile.name, context, x, y);
+    });
+
   return function drawBackgroundLayer(context){
     context.drawImage(buffer, 0, 0); 
   };
 
 }
 
-function createSpriteLayer(entity){
+function createSpriteLayer(entities){
   return function drawSpriteLayer(context){
-    entity.draw(context);
+    entities.forEach(entity => {
+      entity.draw(context);
+    });
   };
 }
 
@@ -62,6 +104,7 @@ function createMario(){
   return loadMarioSprites().then(sprite => {
     const mario = new Entity();
     mario.addTrait(new Velocity());
+    mario.addTrait(new Jump());
 
     mario.draw = function drawMario(context){
       sprite.draw("idle", context, this.pos.x, this.pos.y);
@@ -111,12 +154,12 @@ class SpritesSheet{
     this.draw(name, context, x*this.width, y*this.heigth);
    }
 
-   addRanges(name, ranges){
-     var background = new Map()
-     background.set("ranges", ranges);
-     background.set("tile", name);
-     this.backgrounds.set(name, background);
-   }
+  //  addRanges(name, ranges){
+  //    var background = new Map()
+  //    background.set("ranges", ranges);
+  //    background.set("tile", name);
+  //    this.backgrounds.set(name, background);
+  //  }
 }
 
 class Compositor{
@@ -179,6 +222,28 @@ class Velocity extends Trait{
   }
 }
 
+class Jump extends Trait{
+  constructor(){
+    super("jump");
+    this.duration = 0.5;
+    this.velocity = 200;
+    this.engageTime = 0;
+  }
+  start(){
+    this.engageTime = this.duration;
+  }
+  cancel(){
+    this.engageTime = 0;
+  }
+
+  update(entity, deltaTime){
+    if(this.engageTime > 0){
+      entity.vlcity.y = -this.velocity;
+      this.engageTime -= deltaTime;
+    }
+  }
+}
+
 class Timer{
   constructor(deltaTime = 1/60){
     let accumulatedTime = 0;
@@ -237,6 +302,52 @@ class KeyboardState {
   }
 }
 
+//Level Class (Cleanup)
+class Level{
+  constructor(){
+    this.comp = new Compositor();
+    this.entities = new Set();
+    this.tiles = new Matrix();
+  }
+
+  update(deltaTime){
+    this.entities.forEach(entity => {
+      entity.update(deltaTime); 
+    });
+  }
+}
+
+//Collission Matrix
+class Matrix {
+  constructor(){
+    this.grid = [];
+  }
+  forEach(callback){
+    this.grid.forEach((column, x) => {
+      column.forEach((tile, y) => {
+        callback(tile, x, y);
+      });
+    });
+  }
+
+  get(x, y){
+    const col = this.grid[x];
+    if(col){
+      return col[y];
+    }
+    return undefined;
+  }
+
+  set(x, y, value){
+    if(!this.grid[x]){
+      this.grid[x] = [];
+    }
+    this.grid[x][y] = value;
+  }
+}
+
+window.Matrix = Matrix;
+
 //HTML Canvas Joining
 const canvas = document.getElementById("screen");
 const context = canvas.getContext("2d");
@@ -245,22 +356,19 @@ const context = canvas.getContext("2d");
 //Main Function
 Promise.all([
   createMario(), 
-  loadBackgroundSprites()
-]).then(([mario, backgroundSprites]) => {
-  const comp = new Compositor();
-  const backgroundLayer = createBackgroundLayer(backgroundSprites.backgrounds, backgroundSprites);
-  comp.layers.push(backgroundLayer);
+  loadLevel()
+]).then(([mario, level]) => {
+  // const comp = new Compositor();
   const gravity = 2000;
-  mario.pos.set(64, 180);
-  
-  mario.vlcity.set(200, -600);
+  mario.pos.set(64, 64);
+  level.entities.add(mario);
 
   //Create Keyboard Input Class
   const SPACE = 32;
   const keyboardInput = new KeyboardState();
   keyboardInput.addMapping(SPACE, keyState => {
     if(keyState){
-      mario.jump.star();
+      mario.jump.start();
     } else {
       mario.jump.cancel();
     }
@@ -268,13 +376,10 @@ Promise.all([
   }); 
   keyboardInput.listenTo(window);
 
-  const spriteLayer = createSpriteLayer(mario);
-  comp.layers.push(spriteLayer);
-
   const timer = new Timer(1/60);
   timer.update = function update(deltaTime){
-    mario.update(deltaTime);
-    comp.draw(context);
+    level.update(deltaTime);
+    level.comp.draw(context);
     mario.vlcity.y += gravity*deltaTime;
   }
 
